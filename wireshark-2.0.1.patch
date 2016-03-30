@@ -1,0 +1,388 @@
+diff -urN wireshark-2.0.1/color_filters.c wireshark-2.0.1.new/color_filters.c
+--- wireshark-2.0.1/color_filters.c	2015-12-30 05:49:18.000000000 +0800
++++ wireshark-2.0.1.new/color_filters.c	2016-03-30 18:40:52.222312733 +0800
+@@ -425,7 +425,7 @@
+ void
+ color_filters_enable(gboolean enable)
+ {
+-    packet_list_enable_color(enable);
++    new_packet_list_enable_color(enable);
+ }
+ 
+ 
+diff -urN wireshark-2.0.1/color-shims.c wireshark-2.0.1.new/color-shims.c
+--- wireshark-2.0.1/color-shims.c	1970-01-01 08:00:00.000000000 +0800
++++ wireshark-2.0.1.new/color-shims.c	2016-03-30 18:35:50.086306541 +0800
+@@ -0,0 +1,70 @@
++/* color-shims.c
++ *
++ * Copyright 2012, QA Cafe <info@qacafe.com>
++ *
++ * $Id$
++ *
++ * Wireshark - Network traffic analyzer
++ * By Gerald Combs <gerald@wireshark.org>
++ * Copyright 1998 Gerald Combs
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version 2
++ * of the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
++ */
++
++/* This module provides shims for tshark when gtk encumbered code is
++ * reused with minor modifcations.
++ */
++
++#ifdef HAVE_CONFIG_H
++# include "config.h"
++#endif
++
++#include <glib.h>
++#include <epan/packet.h>
++
++#include <color.h>
++#include <color_filters.h>
++
++gboolean
++initialize_color(
++    color_t *     colorp,
++    guint16       red,
++    guint16       green,
++    guint16       blue
++)
++{
++	colorp->red   = red   >> 8;
++	colorp->green = green >> 8;
++	colorp->blue  = blue  >> 8;
++
++	return TRUE;
++}
++
++void
++color_filter_add_cb(
++    color_filter_t *      colorf _U_,
++    gpointer              user_data _U_
++)
++{
++	g_assert_not_reached();
++}
++
++void
++new_packet_list_enable_color(
++    gboolean      enable _U_
++)
++{
++	g_assert_not_reached();
++}
+diff -urN wireshark-2.0.1/epan/print.c wireshark-2.0.1.new/epan/print.c
+--- wireshark-2.0.1/epan/print.c	2015-12-30 05:49:22.000000000 +0800
++++ wireshark-2.0.1.new/epan/print.c	2016-03-30 18:44:43.334313341 +0800
+@@ -38,6 +38,8 @@
+ #include <wsutil/filesystem.h>
+ #include <wsutil/ws_version_info.h>
+ #include <ftypes/ftypes-int.h>
++#include "../color.h"
++#include "../color_filters.h"
+ 
+ #define PDML_VERSION "0"
+ #define PSML_VERSION "0"
+@@ -244,6 +246,7 @@
+ write_pdml_proto_tree(epan_dissect_t *edt, FILE *fh)
+ {
+     write_pdml_data data;
++    const color_filter_t *cfp = edt->pi.fd->color_filter;
+ 
+     /* Create the output */
+     data.level    = 0;
+@@ -251,7 +254,15 @@
+     data.src_list = edt->pi.data_src;
+     data.edt      = edt;
+ 
+-    fprintf(fh, "<packet>\n");
++    if (cfp != NULL) {
++        fprintf(fh, "<packet foreground='#%02x%02x%02x' background='#%02x%02x%02x'>\n",
++                cfp->fg_color.red, cfp->fg_color.green, cfp->fg_color.blue,
++                cfp->bg_color.red, cfp->bg_color.green, cfp->bg_color.blue);
++    }
++    else {
++        printf("\n%s, %s, %d\n\n", __FILE__, __FUNCTION__, __LINE__);
++        fprintf(fh, "<packet>\n");
++    }
+ 
+     /* Print a "geninfo" protocol as required by PDML */
+     print_pdml_geninfo(edt->tree, fh);
+@@ -626,7 +637,16 @@
+ {
+     gint i;
+ 
+-    fprintf(fh, "<packet>\n");
++    const color_filter_t *cfp = edt->pi.fd->color_filter;
++
++    if (cfp != NULL) {
++        fprintf(fh, "<packet foreground='#%02x%02x%02x' background='#%02x%02x%02x'>\n",
++                cfp->fg_color.red, cfp->fg_color.green, cfp->fg_color.blue,
++                cfp->bg_color.red, cfp->bg_color.green, cfp->bg_color.blue);
++    }
++    else {
++        fprintf(fh, "<packet>\n");
++    }
+ 
+     for (i = 0; i < edt->pi.cinfo->num_cols; i++) {
+         fprintf(fh, "<section>");
+diff -urN wireshark-2.0.1/Makefile.common wireshark-2.0.1.new/Makefile.common
+--- wireshark-2.0.1/Makefile.common	2015-12-30 05:49:18.000000000 +0800
++++ wireshark-2.0.1.new/Makefile.common	2016-03-30 18:35:23.966304017 +0800
+@@ -45,7 +45,8 @@
+ 	frame_tvbuff.c		\
+ 	sync_pipe_write.c	\
+ 	extcap.c		\
+-	extcap_parser.c
++	extcap_parser.c \
++	color_filters.c
+ 
+ # corresponding headers
+ SHARK_COMMON_INCLUDES =	\
+@@ -57,14 +58,14 @@
+ 	fileset.h		\
+ 	frame_tvbuff.h		\
+ 	register.h		\
+-	ws_symbol_export.h
++	ws_symbol_export.h \
++	color_filters.h
+ 
+ # wireshark specifics
+ WIRESHARK_COMMON_SRC =	\
+ 	$(SHARK_COMMON_SRC)	\
+ 	capture_info.c	\
+ 	capture_opts.c	\
+-	color_filters.c	\
+ 	file.c		\
+ 	fileset.c	\
+ 	summary.c
+@@ -73,7 +74,6 @@
+ WIRESHARK_COMMON_INCLUDES =	\
+ 	capture_info.h	\
+ 	capture_opts.h	\
+-	color_filters.h	\
+ 	globals.h	\
+ 	log.h		\
+ 	summary.h	\
+@@ -83,7 +83,9 @@
+ tshark_SOURCES =	\
+ 	$(SHARK_COMMON_SRC)	\
+ 	capture_opts.c		\
+-	tshark.c
++	tshark.c 			\
++	color-shims.c 		\
++	ui/cli/simple_dialog.c
+ 
+ # tfshark specifics
+ tfshark_SOURCES =	\
+@@ -93,6 +95,8 @@
+ # rawshark specifics
+ rawshark_SOURCES =	\
+ 	$(SHARK_COMMON_SRC)	\
++	color-shims.c 		\
++	ui/cli/simple_dialog.c\
+ 	rawshark.c
+ 
+ # androiddump specifics
+diff -urN wireshark-2.0.1/tshark.c wireshark-2.0.1.new/tshark.c
+--- wireshark-2.0.1/tshark.c	2015-12-30 05:49:23.000000000 +0800
++++ wireshark-2.0.1.new/tshark.c	2016-03-30 18:51:51.274325576 +0800
+@@ -129,6 +129,8 @@
+ #endif /* HAVE_LIBPCAP */
+ #include "log.h"
+ #include <epan/funnel.h>
++#include "color.h"
++#include "color_filters.h"
+ 
+ #ifdef HAVE_PLUGINS
+ #include <wsutil/plugins.h>
+@@ -172,6 +174,7 @@
+ 
+ static output_action_e output_action;
+ static gboolean do_dissection;     /* TRUE if we have to dissect each packet */
++static gboolean color_filters;     /* TRUE for packet color XML attributes */
+ static gboolean print_packet_info; /* TRUE if we're to print packet information */
+ static gint print_summary = -1;    /* TRUE if we're to print packet summary information */
+ static gboolean print_details;     /* TRUE if we're to print packet details information */
+@@ -379,7 +382,7 @@
+   fprintf(output, "  -P                       print packet summary even when writing to a file\n");
+   fprintf(output, "  -S <separator>           the line separator to print between packets\n");
+   fprintf(output, "  -x                       add output of hex and ASCII dump (Packet Bytes)\n");
+-  fprintf(output, "  -T pdml|ps|psml|text|fields\n");
++  fprintf(output, "  -T [c]pdml|ps|[c]psml|text|fields\n");
+   fprintf(output, "                           format of text output (def: text)\n");
+   fprintf(output, "  -e <field>               field to print if -Tfields selected (e.g. tcp.port,\n");
+   fprintf(output, "                           _ws.col.Info)\n");
+@@ -1627,6 +1630,7 @@
+       }
+       break;
+     case 'T':        /* printing Type */
++        color_filters = FALSE;
+       print_packet_info = TRUE;
+       if (strcmp(optarg, "text") == 0) {
+         output_action = WRITE_TEXT;
+@@ -1642,6 +1646,16 @@
+         output_action = WRITE_XML;
+         print_details = FALSE;  /* Don't allow details */
+         print_summary = TRUE;   /* Need summary */
++        } else if (strcmp(optarg, "cpdml") == 0) {
++          output_action = WRITE_XML;
++          print_details = TRUE;
++          print_summary = FALSE;
++          color_filters = TRUE;
++        } else if (strcmp(optarg, "cpsml") == 0) {
++          output_action = WRITE_XML;
++          print_details = FALSE;
++          print_summary = TRUE;
++          color_filters = TRUE;
+       } else if (strcmp(optarg, "fields") == 0) {
+         output_action = WRITE_FIELDS;
+         print_details = TRUE;   /* Need full tree info */
+@@ -1650,13 +1664,13 @@
+         cmdarg_err("Invalid -T parameter \"%s\"; it must be one of:", optarg);                   /* x */
+         cmdarg_err_cont("\t\"fields\" The values of fields specified with the -e option, in a form\n"
+                         "\t         specified by the -E option.\n"
+-                        "\t\"pdml\"   Packet Details Markup Language, an XML-based format for the\n"
++                          "\t\"[c]pdml\"   Packet Details Markup Language, an XML-based format for the\n"
+                         "\t         details of a decoded packet. This information is equivalent to\n"
+                         "\t         the packet details printed with the -V flag.\n"
+                         "\t\"ps\"     PostScript for a human-readable one-line summary of each of\n"
+                         "\t         the packets, or a multi-line view of the details of each of\n"
+                         "\t         the packets, depending on whether the -V flag was specified.\n"
+-                        "\t\"psml\"   Packet Summary Markup Language, an XML-based format for the\n"
++                          "\t\"[c]psml\"   Packet Summary Markup Language, an XML-based format for the\n"
+                         "\t         summary information of a decoded packet. This information is\n"
+                         "\t         equivalent to the information shown in the one-line summary\n"
+                         "\t         printed by default.\n"
+@@ -2189,6 +2203,12 @@
+   do_dissection = print_packet_info || rfcode || dfcode || tap_listeners_require_dissection();
+   tshark_debug("tshark: do_dissection = %s", do_dissection ? "TRUE" : "FALSE");
+ 
++  if (print_packet_info && color_filters) {
++    color_filters_init();
++  }
++  else {
++    color_filters = FALSE;
++  }
+   if (cf_name) {
+     tshark_debug("tshark: Opening capture file: %s", cf_name);
+     /*
+@@ -3079,6 +3099,10 @@
+       epan_dissect_prime_dfilter(edt, cf->dfcode);
+ 
+     col_custom_prime_edt(edt, &cf->cinfo);
++    if (color_filters) {
++        epan_dissect_init(edt, cf->epan, TRUE, TRUE);
++        color_filters_prime_edt(edt);
++    }
+ 
+     /* We only need the columns if either
+          1) some tap needs the columns
+@@ -3111,6 +3135,8 @@
+     if (print_packet_info) {
+       /* We're printing packet information; print the information for
+          this packet. */
++      edt->pi.fd->color_filter =
++        color_filters ? color_filters_colorize_packet(edt) : NULL;
+       print_packet(cf, edt);
+ 
+       /* The ANSI C standard does not appear to *require* that a line-buffered
+@@ -3344,7 +3370,7 @@
+     if (do_dissection) {
+       gboolean create_proto_tree;
+ 
+-      if (cf->dfcode || print_details || filtering_tap_listeners ||
++      if (cf->dfcode || print_details || filtering_tap_listeners || color_filters ||
+          (tap_flags & TL_REQUIRES_PROTO_TREE) || have_custom_cols(&cf->cinfo))
+            create_proto_tree = TRUE;
+       else
+@@ -3714,6 +3740,10 @@
+       epan_dissect_prime_dfilter(edt, cf->dfcode);
+ 
+     col_custom_prime_edt(edt, &cf->cinfo);
++    if (color_filters) {
++        epan_dissect_init(edt, cf->epan, TRUE, TRUE);
++      color_filters_prime_edt(edt);
++    }
+ 
+     /* We only need the columns if either
+          1) some tap needs the columns
+@@ -3748,6 +3778,8 @@
+     if (print_packet_info) {
+       /* We're printing packet information; print the information for
+          this packet. */
++      edt->pi.fd->color_filter =
++        color_filters ? color_filters_colorize_packet(edt) : NULL;
+       print_packet(cf, edt);
+ 
+       /* The ANSI C standard does not appear to *require* that a line-buffered
+diff -urN wireshark-2.0.1/ui/cli/simple_dialog.c wireshark-2.0.1.new/ui/cli/simple_dialog.c
+--- wireshark-2.0.1/ui/cli/simple_dialog.c	1970-01-01 08:00:00.000000000 +0800
++++ wireshark-2.0.1.new/ui/cli/simple_dialog.c	2016-03-30 18:35:03.014305567 +0800
+@@ -0,0 +1,52 @@
++/*
++* Copyright 2012, QA Cafe <info@qacafe.com>
++*
++* $Id$
++*
++* Wireshark - Network traffic analyzer
++* By Gerald Combs <gerald@wireshark.org>
++* Copyright 1998 Gerald Combs
++*
++* This program is free software; you can redistribute it and/or
++* modify it under the terms of the GNU General Public License
++* as published by the Free Software Foundation; either version 2
++* of the License, or (at your option) any later version.
++*
++* This program is distributed in the hope that it will be useful,
++* but WITHOUT ANY WARRANTY; without even the implied warranty of
++* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++* GNU General Public License for more details.
++*
++* You should have received a copy of the GNU General Public License
++* along with this program; if not, write to the Free Software
++* Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
++*/
++
++/* This module provides a minimal cli implementaion of simple dialogs.
++ * It is only used by tshark and not wireshark.
++ */
++
++#ifdef HAVE_CONFIG_H
++# include "config.h"
++#endif
++
++#include <glib.h>
++#include <stdio.h>
++#include <ui/simple_dialog.h>
++
++gpointer
++simple_dialog(
++    ESD_TYPE_E    type _U_,
++    gint          btn_mask _U_,
++    const gchar * msg_format,
++    ...
++)
++{
++	va_list       ap;
++
++	va_start(ap, msg_format);
++	vfprintf(stderr, msg_format, ap);
++	va_end(ap);
++
++	return NULL;
++}
+\ No newline at end of file
